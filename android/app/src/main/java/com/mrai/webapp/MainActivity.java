@@ -3,8 +3,11 @@ package com.mrai.webapp;
 import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -109,8 +112,16 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (url != null && !url.startsWith("about:") && !url.startsWith("data:")) {
+                    showingError = false;
+                }
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 swipe.setRefreshing(false);
+                if (!showingError) applyStatusBarFromPage(view);
             }
 
             @Override
@@ -188,6 +199,58 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception ignored) {
         }
         return true;
+    }
+
+    // পেজের theme-color বা ব্যাকগ্রাউন্ড রং পড়ে স্ট্যাটাস বারে বসায় (সময়/ব্যাটারির জায়গা)
+    private void applyStatusBarFromPage(WebView view) {
+        final String js = "(function(){try{var m=document.querySelector('meta[name=\"theme-color\"]');"
+                + "if(m&&m.content)return m.content;"
+                + "var c=getComputedStyle(document.body||document.documentElement).backgroundColor;"
+                + "if(!c||c==='transparent'||c.indexOf('rgba(0, 0, 0, 0)')===0){"
+                + "c=getComputedStyle(document.documentElement).backgroundColor;}"
+                + "return c||'';}catch(e){return '';}})()";
+        view.evaluateJavascript(js, value -> {
+            if (value == null || value.equals("null")) return;
+            Integer color = parseCssColor(value.replace("\"", "").trim());
+            if (color != null) setStatusBar(color);
+        });
+    }
+
+    private static Integer parseCssColor(String s) {
+        try {
+            if (s.startsWith("#")) {
+                String h = s.substring(1);
+                if (h.length() == 3) {
+                    h = "" + h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+                }
+                if (h.length() == 6) return Color.parseColor("#" + h);
+                return null;
+            }
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("rgba?\\(\\s*(\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)(?:[,/\\s]+([0-9.]+))?\\s*\\)")
+                    .matcher(s);
+            if (m.find()) {
+                if (m.group(4) != null && Double.parseDouble(m.group(4)) < 0.5) return null;
+                return Color.rgb(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)));
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private void setStatusBar(int color) {
+        getWindow().setStatusBarColor(color);
+        if (Build.VERSION.SDK_INT >= 23) {
+            View decor = getWindow().getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            double lum = (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255.0;
+            if (lum > 0.6) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            } else {
+                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            }
+            decor.setSystemUiVisibility(flags);
+        }
     }
 
     private String errorHtml() {
