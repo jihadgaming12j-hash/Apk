@@ -75,7 +75,18 @@ jobs:
           java-version: "17"
 
       - name: Android SDK প্রস্তুত
-        uses: android-actions/setup-android@v3
+        run: |
+          # GitHub runner এ Android SDK আগে থেকেই আছে, তাই আলাদা action লাগে না
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -n1)"
+          echo "sdkmanager: $SDKM"
+          set +o pipefail
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1 || true
+          set -o pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
       - name: Gradle প্রস্তুত
         uses: gradle/actions/setup-gradle@v4
