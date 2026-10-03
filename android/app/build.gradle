@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.mrai.webapp'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId System.getenv("APP_PACKAGE") ?: "com.mrai.webapp"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("release.jks")
+            storePassword System.getenv("KS_PASS") ?: "mraiprime"
+            keyAlias System.getenv("KS_ALIAS") ?: "mraiprime"
+            keyPassword System.getenv("KS_KEYPASS") ?: "mraiprime"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'androidx.webkit:webkit:1.8.0'
+}
