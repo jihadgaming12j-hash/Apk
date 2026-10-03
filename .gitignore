@@ -1,0 +1,10 @@
+.venv/
+.gradle/
+build/
+local.properties
+android/app/release.jks
+android/app/build/
+android/app/src/main/assets/
+android/app/src/main/res/mipmap-*/
+icon.bin
+source.zip
