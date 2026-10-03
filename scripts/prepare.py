@@ -169,10 +169,32 @@ def main():
     icon_url = env('ICON_URL').strip()
     if icon_url:
         icon_path = os.path.join(ROOT, 'icon.bin')
-        download(icon_url, icon_path, MAX_ICON)
+        try:
+            download(icon_url, icon_path, MAX_ICON)
+            Image.open(icon_path).verify()
+            print('ICON: custom icon downloaded (%d bytes)' % os.path.getsize(icon_path))
+        except SystemExit:
+            raise
+        except Exception as e:
+            print('::warning::ICON download/verify failed (%s). Default icon will be used.' % e)
+            icon_path = None
+    else:
+        print('ICON: no icon uploaded, default icon will be used')
     make_icons(icon_path)
-    if icon_path and os.path.exists(icon_path):
-        os.remove(icon_path)
+    if os.path.exists(os.path.join(ROOT, 'icon.bin')):
+        os.remove(os.path.join(ROOT, 'icon.bin'))
+
+    # প্যাকেজ হওয়া ফাইলের তালিকা (লগে দেখার জন্য)
+    www = os.path.join(APP, 'assets', 'www')
+    if mode == 'file' and os.path.isdir(www):
+        total = 0
+        for base, _, files in os.walk(www):
+            for fn in files:
+                p = os.path.join(base, fn)
+                total += 1
+                if total <= 40:
+                    print('ASSET: %s (%d bytes)' % (os.path.relpath(p, www), os.path.getsize(p)))
+        print('ASSET: total %d files' % total)
 
     print('OK: job=%s mode=%s package=%s orientation=%s refresh=%s' % (job, mode, pkg, orientation, refresh))
 
