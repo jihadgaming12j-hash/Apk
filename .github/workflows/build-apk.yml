@@ -1,0 +1,132 @@
+name: Build APK
+run-name: build-${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID (12 hex)"
+        required: true
+        type: string
+      mode:
+        description: "url or file"
+        required: true
+        type: string
+        default: "url"
+      app_name:
+        description: "App name"
+        required: true
+        type: string
+      package_name:
+        description: "Package name"
+        required: true
+        type: string
+      url:
+        description: "Website URL (url mode)"
+        required: false
+        type: string
+        default: ""
+      orientation:
+        description: "portrait / landscape / auto"
+        required: false
+        type: string
+        default: "portrait"
+      refresh:
+        description: "Pull to refresh 1/0"
+        required: false
+        type: string
+        default: "1"
+      icon_url:
+        description: "Icon file URL"
+        required: false
+        type: string
+        default: ""
+      src_url:
+        description: "Source .zip/.html URL (file mode)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      MODE: ${{ inputs.mode }}
+      APP_NAME: ${{ inputs.app_name }}
+      APP_PACKAGE: ${{ inputs.package_name }}
+      TARGET_URL: ${{ inputs.url }}
+      ORIENTATION: ${{ inputs.orientation }}
+      REFRESH: ${{ inputs.refresh }}
+      ICON_URL: ${{ inputs.icon_url }}
+      SRC_URL: ${{ inputs.src_url }}
+    steps:
+      - name: সোর্স কোড নামানো
+        uses: actions/checkout@v4
+
+      - name: Java পরিবেশ তৈরি
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK প্রস্তুত
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle প্রস্তুত
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: অ্যাপ কনফিগ ও আইকন প্রসেস
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet pillow
+          .venv/bin/python scripts/prepare.py
+
+      - name: সাইনিং কী প্রস্তুত
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASS }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+            echo "KS_PASS=$KEYSTORE_PASS" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KS_KEYPASS=$KEY_PASS" >> "$GITHUB_ENV"
+          else
+            keytool -genkeypair -keystore android/app/release.jks \
+              -storepass mraiprime -keypass mraiprime -alias mraiprime \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Mr Ai Prime, O=Mr Ai Prime, C=BD"
+          fi
+
+      - name: APK কম্পাইল
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: APK পাবলিশ
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "app-${JOB_ID}.apk"
+          gh release create "job-${JOB_ID}" "app-${JOB_ID}.apk" \
+            -R "$GITHUB_REPOSITORY" \
+            --title "job-${JOB_ID}" \
+            --notes "Auto build"
+
+      - name: পুরনো ফাইল পরিষ্কার
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
+            --jq '.[] | select(.tagName|startswith("job-")) | select((.createdAt|fromdateiso8601) < (now-86400)) | .tagName' \
+          | while read -r t; do
+              gh release delete "$t" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+            done
