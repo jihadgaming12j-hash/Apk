@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """GitHub Actions এ চলে: ইনপুট যাচাই করে Android প্রজেক্টে নাম, URL, আইকন ও ওয়েব ফাইল বসায়।
-সব ইনপুট environment variable থেকে আসে (shell এ সরাসরি বসানো হয় না, তাই injection ঝুঁকি নেই)।"""
+সব ইনপুট environment variable থেকে আসে (shell এ সরাসরি বসানো হয় না, তাই injection ঝুঁকি নেই)।
+আপলোড করা আইকন/সোর্স ফাইল uploads_in/ ফোল্ডারে আগেই নামানো থাকে (GitHub release থেকে)।"""
 import json
 import os
 import re
 import shutil
 import sys
-import urllib.request
 import zipfile
-from urllib.parse import urlparse
 from xml.sax.saxutils import escape
 
 from PIL import Image, ImageDraw
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 APP = os.path.join(ROOT, 'android', 'app', 'src', 'main')
+IN_DIR = os.path.join(ROOT, 'uploads_in')
 ASSET_URL = 'https://appassets.androidplatform.net/assets/www/index.html'
 MAX_SRC = 25 * 1024 * 1024
 MAX_ICON = 5 * 1024 * 1024
@@ -37,29 +37,18 @@ def android_str(s):
     return s
 
 
-def download(url, dest, limit):
-    if not url.startswith(('http://', 'https://')):
-        die('invalid download url')
-    req = urllib.request.Request(url, headers={'User-Agent': 'mraiprime-apk-builder'})
-    size = 0
-    with urllib.request.urlopen(req, timeout=60) as r, open(dest, 'wb') as f:
-        while True:
-            chunk = r.read(65536)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > limit:
-                die('file too large')
-            f.write(chunk)
+def find_upload(prefix, exts):
+    for ext in exts:
+        p = os.path.join(IN_DIR, prefix + '.' + ext)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def make_icons(icon_path):
     sizes = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
     if icon_path:
-        try:
-            im = Image.open(icon_path).convert('RGBA')
-        except Exception:
-            die('icon file is not a valid image')
+        im = Image.open(icon_path).convert('RGBA')
         w, h = im.size
         s = min(w, h)
         left, top = (w - s) // 2, (h - s) // 2
@@ -94,6 +83,8 @@ def extract_zip(zpath, dest):
         for info in infos:
             n = info.filename.replace('\\', '/')
             if n.endswith('/') or not n.startswith(prefix):
+                continue
+            if n.startswith('__MACOSX/'):
                 continue
             target = os.path.join(dest, n[len(prefix):])
             if not os.path.realpath(target).startswith(real_dest + os.sep):
@@ -146,55 +137,52 @@ def main():
         json.dump({'mode': mode, 'url': start, 'orientation': orientation, 'refresh': refresh}, f)
 
     # ওয়েব ফাইল (file mode)
+    www = os.path.join(APP, 'assets', 'www')
     if mode == 'file':
-        www = os.path.join(APP, 'assets', 'www')
         shutil.rmtree(www, ignore_errors=True)
         os.makedirs(www, exist_ok=True)
-        src_url = env('SRC_URL').strip()
-        path = urlparse(src_url).path.lower()
-        if path.endswith('.html'):
-            download(src_url, os.path.join(www, 'index.html'), MAX_SRC)
-        elif path.endswith('.zip'):
-            tmp = os.path.join(ROOT, 'source.zip')
-            download(src_url, tmp, MAX_SRC)
-            extract_zip(tmp, www)
-            os.remove(tmp)
+        src = find_upload('source', ('zip', 'html'))
+        if not src:
+            die('source file not found in uploads_in (upload step failed)')
+        if os.path.getsize(src) > MAX_SRC:
+            die('source file too large')
+        print('SOURCE: %s (%d bytes)' % (os.path.basename(src), os.path.getsize(src)))
+        if src.endswith('.html'):
+            shutil.copy(src, os.path.join(www, 'index.html'))
         else:
-            die('source must be .zip or .html')
-        if not os.path.isfile(os.path.join(www, 'index.html')):
-            die('index.html missing')
+            extract_zip(src, www)
+        idx = os.path.join(www, 'index.html')
+        if not os.path.isfile(idx) or os.path.getsize(idx) == 0:
+            die('index.html missing or empty')
 
     # আইকন
-    icon_path = None
-    icon_url = env('ICON_URL').strip()
-    if icon_url:
-        icon_path = os.path.join(ROOT, 'icon.bin')
+    icon_path = find_upload('icon', ('png', 'jpg', 'jpeg'))
+    if icon_path:
         try:
-            download(icon_url, icon_path, MAX_ICON)
+            if os.path.getsize(icon_path) > MAX_ICON:
+                raise ValueError('icon too large')
             Image.open(icon_path).verify()
-            print('ICON: custom icon downloaded (%d bytes)' % os.path.getsize(icon_path))
-        except SystemExit:
-            raise
+            print('ICON: custom icon used (%d bytes)' % os.path.getsize(icon_path))
         except Exception as e:
-            print('::warning::ICON download/verify failed (%s). Default icon will be used.' % e)
+            print('::warning::ICON invalid (%s). Default icon will be used.' % e)
             icon_path = None
     else:
         print('ICON: no icon uploaded, default icon will be used')
     make_icons(icon_path)
-    if os.path.exists(os.path.join(ROOT, 'icon.bin')):
-        os.remove(os.path.join(ROOT, 'icon.bin'))
 
     # প্যাকেজ হওয়া ফাইলের তালিকা (লগে দেখার জন্য)
-    www = os.path.join(APP, 'assets', 'www')
-    if mode == 'file' and os.path.isdir(www):
+    if mode == 'file':
         total = 0
         for base, _, files in os.walk(www):
-            for fn in files:
+            for fn in sorted(files):
                 p = os.path.join(base, fn)
                 total += 1
                 if total <= 40:
                     print('ASSET: %s (%d bytes)' % (os.path.relpath(p, www), os.path.getsize(p)))
         print('ASSET: total %d files' % total)
+        with open(os.path.join(www, 'index.html'), 'rb') as f:
+            head = f.read(300).decode('utf-8', 'replace')
+        print('INDEX HEAD: ' + ' '.join(head.split())[:250])
 
     print('OK: job=%s mode=%s package=%s orientation=%s refresh=%s' % (job, mode, pkg, orientation, refresh))
 
