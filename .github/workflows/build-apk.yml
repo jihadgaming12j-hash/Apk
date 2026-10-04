@@ -36,13 +36,8 @@ on:
         required: false
         type: string
         default: "1"
-      icon_url:
-        description: "Icon file URL"
-        required: false
-        type: string
-        default: ""
-      src_url:
-        description: "Source .zip/.html URL (file mode)"
+      upload_tag:
+        description: "Release tag that holds the uploaded icon/source files (optional)"
         required: false
         type: string
         default: ""
@@ -62,11 +57,25 @@ jobs:
       TARGET_URL: ${{ inputs.url }}
       ORIENTATION: ${{ inputs.orientation }}
       REFRESH: ${{ inputs.refresh }}
-      ICON_URL: ${{ inputs.icon_url }}
-      SRC_URL: ${{ inputs.src_url }}
+      UPLOAD_TAG: ${{ inputs.upload_tag }}
     steps:
       - name: সোর্স কোড নামানো
         uses: actions/checkout@v4
+
+      - name: আপলোড করা ফাইল নামানো
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p uploads_in
+          if [ -n "$UPLOAD_TAG" ]; then
+            if ! echo "$UPLOAD_TAG" | grep -Eq '^up-[a-f0-9]{12}$'; then
+              echo "bad upload tag"; exit 1
+            fi
+            gh release download "$UPLOAD_TAG" -R "$GITHUB_REPOSITORY" -D uploads_in
+            ls -la uploads_in
+          else
+            echo "no uploaded files"
+          fi
 
       - name: Java পরিবেশ তৈরি
         uses: actions/setup-java@v4
@@ -131,13 +140,24 @@ jobs:
             --title "job-${JOB_ID}" \
             --notes "Auto build"
 
+      - name: আপলোড ফাইল মুছে ফেলা
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if echo "$UPLOAD_TAG" | grep -Eq '^up-[a-f0-9]{12}$'; then
+            gh release delete "$UPLOAD_TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+          fi
+
       - name: পুরনো ফাইল পরিষ্কার
+        if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
-            --jq '.[] | select(.tagName|startswith("job-")) | select((.createdAt|fromdateiso8601) < (now-86400)) | .tagName' \
+            --jq '.[] | select(.tagName|test("^(job|up)-")) | select((.createdAt|fromdateiso8601) < (now-86400)) | .tagName' \
           | while read -r t; do
               gh release delete "$t" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
             done
