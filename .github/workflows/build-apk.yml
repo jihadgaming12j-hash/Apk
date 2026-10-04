@@ -37,7 +37,7 @@ on:
         type: string
         default: "1"
       upload_tag:
-        description: "Release tag that holds the uploaded icon/source files (optional)"
+        description: "Temporary branch that holds the uploaded icon/source files (optional)"
         required: false
         type: string
         default: ""
@@ -63,15 +63,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: আপলোড করা ফাইল নামানো
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: ${{ inputs.upload_tag != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.upload_tag }}
+          path: upload_repo
+
+      - name: আপলোড করা ফাইল সাজানো
         run: |
           mkdir -p uploads_in
-          if [ -n "$UPLOAD_TAG" ]; then
-            if ! echo "$UPLOAD_TAG" | grep -Eq '^up-[a-f0-9]{12}$'; then
-              echo "bad upload tag"; exit 1
-            fi
-            gh release download "$UPLOAD_TAG" -R "$GITHUB_REPOSITORY" -D uploads_in
+          if ! echo "$JOB_ID" | grep -Eq '^[a-f0-9]{12}$'; then echo "bad job id"; exit 1; fi
+          if [ -d "upload_repo/jobs/$JOB_ID" ]; then
+            cp upload_repo/jobs/"$JOB_ID"/* uploads_in/
             ls -la uploads_in
           else
             echo "no uploaded files"
@@ -147,7 +150,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if echo "$UPLOAD_TAG" | grep -Eq '^up-[a-f0-9]{12}$'; then
-            gh release delete "$UPLOAD_TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$UPLOAD_TAG" || true
           fi
 
       - name: পুরনো ফাইল পরিষ্কার
